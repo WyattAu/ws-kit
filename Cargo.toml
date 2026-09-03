@@ -1,0 +1,39 @@
+[package]
+name = "ws-kit"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/WyattAu/ws-kit"
+description = "Generic authenticated typed WebSocket — BroadcastHub, RoomManager, heartbeat, and token extraction for Axum"
+keywords = ["websocket", "realtime", "axum", "broadcast"]
+categories = ["web-programming", "asynchronous"]
+exclude = ["/target"]
+readme = "README.md"
+
+[dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
+axum = { version = "0.8", features = ["ws"], optional = true }
+tower = { version = "0.5", optional = true }
+http = { version = "1", optional = true }
+futures = { version = "0.3" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = { version = "2", default-features = false }
+dashmap = "6"
+tracing = { version = "0.1", optional = true }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+proptest = "1"
+
+[features]
+default = ["std", "axum"]
+std = ["thiserror/std"]
+axum = ["dep:axum", "dep:tower", "dep:http"]
+tracing = ["dep:tracing"]
+
+[[bench]]
+name = "ws_bench"
+harness = false
