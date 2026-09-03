@@ -107,7 +107,10 @@ fn room_manager_basic() {
     r.join(1, "Alice".to_string());
     r.join(2, "Bob".to_string());
     assert!(r.contains(1));
-    assert_eq!(r.participant_names(), vec!["Alice".to_string(), "Bob".to_string()]);
+    assert_eq!(
+        r.participant_names(),
+        vec!["Alice".to_string(), "Bob".to_string()]
+    );
     assert_eq!(r.participant_count(), 2);
     assert_eq!(m.total_participants(), 2);
     assert!(r.leave(2));

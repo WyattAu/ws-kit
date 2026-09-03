@@ -77,7 +77,10 @@ impl Room {
 
     /// Snapshot of participant display names.
     pub fn participant_names(&self) -> Vec<String> {
-        self.participants.iter().map(|r| r.value().clone()).collect()
+        self.participants
+            .iter()
+            .map(|r| r.value().clone())
+            .collect()
     }
 
     /// Number of tracked participants.
@@ -167,7 +170,10 @@ impl RoomManager {
 
     /// Total participants across all rooms.
     pub fn total_participants(&self) -> usize {
-        self.rooms.iter().map(|e| e.value().participant_count()).sum()
+        self.rooms
+            .iter()
+            .map(|e| e.value().participant_count())
+            .sum()
     }
 
     /// Remove all empty rooms. Returns number removed.
@@ -244,7 +250,10 @@ mod tests {
         room.join(3, name("bob"));
         let mut pairs = room.participants();
         pairs.sort();
-        assert_eq!(pairs, vec![(3, "bob".to_string()), (7, "alice".to_string())]);
+        assert_eq!(
+            pairs,
+            vec![(3, "bob".to_string()), (7, "alice".to_string())]
+        );
         let mut names = room.participant_names();
         names.sort();
         assert_eq!(names, vec!["alice".to_string(), "bob".to_string()]);
