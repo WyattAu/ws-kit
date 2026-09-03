@@ -42,7 +42,10 @@ fn config_builder() {
 
 #[test]
 fn ws_error_display() {
-    assert_eq!(WsError::AuthMissing.to_string(), "authentication token missing");
+    assert_eq!(
+        WsError::AuthMissing.to_string(),
+        "authentication token missing"
+    );
     assert_eq!(WsError::Closed.to_string(), "connection closed");
 }
 
@@ -101,11 +104,17 @@ async fn hub_integration_with_config() {
 fn room_manager_basic() {
     let m = RoomManager::new();
     let r = m.get_or_create("general");
-    r.join("alice");
-    assert!(r.contains("alice"));
+    r.join(1, "Alice".to_string());
+    r.join(2, "Bob".to_string());
+    assert!(r.contains(1));
+    assert_eq!(r.participant_names(), vec!["Alice".to_string(), "Bob".to_string()]);
+    assert_eq!(r.participant_count(), 2);
+    assert_eq!(m.total_participants(), 2);
+    assert!(r.leave(2));
     assert_eq!(r.participant_count(), 1);
-    r.leave("alice");
-    assert_eq!(r.participant_count(), 0);
+    r.leave(1);
+    assert_eq!(m.cleanup_empty(), 1);
+    assert_eq!(m.room_count(), 0);
 }
 
 #[tokio::test]
@@ -193,7 +202,10 @@ fn extractor_axum_parts() {
         http::header::AUTHORIZATION,
         "Bearer axum_token".parse().unwrap(),
     );
-    let req = Request::builder().uri("/ws?token=ignored").body(()).unwrap();
+    let req = Request::builder()
+        .uri("/ws?token=ignored")
+        .body(())
+        .unwrap();
     let (mut parts, _) = req.into_parts();
     parts.headers = headers;
     let ex = TokenExtractor::default();

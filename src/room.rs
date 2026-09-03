@@ -1,21 +1,24 @@
 //! Room-based group messaging.
 //!
 //! [`RoomManager`] owns a [`DashMap`] of [`Room`]s. Each [`Room`] is an
-//! isolated broadcast domain with participant tracking.
+//! isolated broadcast domain with a participant roster keyed by connection
+//! id (`u32`) mapping to a display name (`String`).
 
 use std::sync::Arc;
 
 use dashmap::DashMap;
 use tokio::sync::broadcast;
 
+use crate::config::WsConfig;
 use crate::error::WsError;
 
-/// A single broadcast room.
+/// A single broadcast room with a participant roster.
 pub struct Room {
     /// Room identifier.
     pub id: String,
     tx: broadcast::Sender<String>,
-    participants: DashMap<String, ()>,
+    /// Participant roster: connection id -> display name.
+    participants: DashMap<u32, String>,
 }
 
 impl std::fmt::Debug for Room {
@@ -49,19 +52,32 @@ impl Room {
         self.tx.send(msg).map_err(|_| WsError::BroadcastFull)
     }
 
-    /// Add a participant.
-    pub fn join(&self, participant_id: impl Into<String>) {
-        self.participants.insert(participant_id.into(), ());
+    /// Add a participant (or refresh its display name on re-join).
+    pub fn join(&self, participant_id: u32, name: String) {
+        self.participants.insert(participant_id, name);
     }
 
-    /// Remove a participant.
-    pub fn leave(&self, participant_id: &str) -> bool {
-        self.participants.remove(participant_id).is_some()
+    /// Remove a participant. Returns true if it was present.
+    pub fn leave(&self, participant_id: u32) -> bool {
+        self.participants.remove(&participant_id).is_some()
     }
 
     /// Check if participant is in room.
-    pub fn contains(&self, participant_id: &str) -> bool {
-        self.participants.contains_key(participant_id)
+    pub fn contains(&self, participant_id: u32) -> bool {
+        self.participants.contains_key(&participant_id)
+    }
+
+    /// Snapshot of `(participant_id, name)` pairs.
+    pub fn participants(&self) -> Vec<(u32, String)> {
+        self.participants
+            .iter()
+            .map(|r| (*r.key(), r.value().clone()))
+            .collect()
+    }
+
+    /// Snapshot of participant display names.
+    pub fn participant_names(&self) -> Vec<String> {
+        self.participants.iter().map(|r| r.value().clone()).collect()
     }
 
     /// Number of tracked participants.
@@ -86,28 +102,38 @@ impl Room {
 }
 
 /// Manages a collection of [`Room`]s.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RoomManager {
     rooms: DashMap<String, Arc<Room>>,
+    default_capacity: usize,
+}
+
+impl Default for RoomManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RoomManager {
-    /// Create an empty manager.
+    /// Create an empty manager with default capacity (1024).
     pub fn new() -> Self {
         Self {
             rooms: DashMap::new(),
+            default_capacity: 1024,
         }
     }
 
-    /// Get an existing room or create a new one with default capacity (1024).
-    pub fn get_or_create(&self, room_id: &str) -> Arc<Room> {
-        if let Some(r) = self.rooms.get(room_id) {
-            return Arc::clone(&r);
+    /// Create an empty manager whose default capacity comes from [`WsConfig`].
+    pub fn with_config(config: &WsConfig) -> Self {
+        Self {
+            rooms: DashMap::new(),
+            default_capacity: config.broadcast_capacity,
         }
-        let room = Arc::new(Room::new(room_id, 1024));
-        // Insert-or-get to handle race.
-        let entry = self.rooms.entry(room_id.to_string()).or_insert_with(|| Arc::clone(&room));
-        Arc::clone(entry.value())
+    }
+
+    /// Get an existing room or create a new one with the manager's default capacity.
+    pub fn get_or_create(&self, room_id: &str) -> Arc<Room> {
+        self.get_or_create_with_capacity(room_id, self.default_capacity)
     }
 
     /// Get an existing room or create with custom capacity.
@@ -116,7 +142,11 @@ impl RoomManager {
             return Arc::clone(&r);
         }
         let room = Arc::new(Room::new(room_id, capacity));
-        let entry = self.rooms.entry(room_id.to_string()).or_insert_with(|| Arc::clone(&room));
+        // Insert-or-get to handle race.
+        let entry = self
+            .rooms
+            .entry(room_id.to_string())
+            .or_insert_with(|| Arc::clone(&room));
         Arc::clone(entry.value())
     }
 
@@ -135,6 +165,11 @@ impl RoomManager {
         self.rooms.len()
     }
 
+    /// Total participants across all rooms.
+    pub fn total_participants(&self) -> usize {
+        self.rooms.iter().map(|e| e.value().participant_count()).sum()
+    }
+
     /// Remove all empty rooms. Returns number removed.
     pub fn cleanup(&self) -> usize {
         let mut to_remove = Vec::new();
@@ -143,6 +178,22 @@ impl RoomManager {
                 to_remove.push(entry.key().clone());
             }
         }
+        let n = to_remove.len();
+        for k in to_remove {
+            self.rooms.remove(&k);
+        }
+        n
+    }
+
+    /// Remove all rooms with zero participants (regardless of receivers).
+    /// Returns number removed.
+    pub fn cleanup_empty(&self) -> usize {
+        let to_remove: Vec<String> = self
+            .rooms
+            .iter()
+            .filter(|e| e.value().participant_count() == 0)
+            .map(|e| e.key().clone())
+            .collect();
         let n = to_remove.len();
         for k in to_remove {
             self.rooms.remove(&k);
@@ -160,17 +211,44 @@ impl RoomManager {
 mod tests {
     use super::*;
 
+    fn name(s: &str) -> String {
+        s.to_string()
+    }
+
     #[test]
     fn room_join_leave() {
         let room = Room::new("lobby", 16);
         assert_eq!(room.participant_count(), 0);
-        room.join("alice");
-        room.join("bob");
+        room.join(1, name("alice"));
+        room.join(2, name("bob"));
         assert_eq!(room.participant_count(), 2);
-        assert!(room.contains("alice"));
-        assert!(room.leave("alice"));
-        assert!(!room.contains("alice"));
+        assert!(room.contains(1));
+        assert!(room.leave(1));
+        assert!(!room.contains(1));
         assert_eq!(room.participant_count(), 1);
+    }
+
+    #[test]
+    fn room_rejoin_updates_name() {
+        let room = Room::new("lobby", 16);
+        room.join(1, name("alice"));
+        room.join(1, name("alice2"));
+        assert_eq!(room.participant_count(), 1);
+        assert_eq!(room.participant_names(), vec!["alice2".to_string()]);
+    }
+
+    #[test]
+    fn room_participant_snapshots() {
+        let room = Room::new("lobby", 16);
+        room.join(7, name("alice"));
+        room.join(3, name("bob"));
+        let mut pairs = room.participants();
+        pairs.sort();
+        assert_eq!(pairs, vec![(3, "bob".to_string()), (7, "alice".to_string())]);
+        let mut names = room.participant_names();
+        names.sort();
+        assert_eq!(names, vec!["alice".to_string(), "bob".to_string()]);
+        assert_eq!(room.participant_count(), 2);
     }
 
     #[tokio::test]
@@ -199,20 +277,63 @@ mod tests {
     }
 
     #[test]
+    fn manager_with_config_capacity() {
+        let cfg = WsConfig::builder().broadcast_capacity(2048).build();
+        let m = RoomManager::with_config(&cfg);
+        let r = m.get_or_create("room1");
+        // Capacity is not directly observable; verify the room works and is shared.
+        let r2 = m.get_or_create("room1");
+        assert!(Arc::ptr_eq(&r, &r2));
+        assert_eq!(m.room_count(), 1);
+    }
+
+    #[test]
     fn manager_cleanup_removes_empty() {
         let m = RoomManager::new();
         let _r = m.get_or_create("a");
-        // Need a receiver or participant to keep alive? is_empty checks both.
         // No participants and no receivers -> empty, should be cleaned.
-        // But the test creates a room with no receivers, so cleanup should remove.
-        // However `get_or_create` doesn't create a receiver.
         assert_eq!(m.cleanup(), 1);
         assert_eq!(m.room_count(), 0);
 
         let r = m.get_or_create("b");
-        r.join("user1");
+        r.join(1, name("user1"));
         assert_eq!(m.cleanup(), 0);
         assert_eq!(m.room_count(), 1);
+    }
+
+    #[test]
+    fn manager_cleanup_empty_removes_zero_participant_rooms() {
+        let m = RoomManager::new();
+        let _a = m.get_or_create("a");
+        // No participants -> removed regardless of receivers.
+        assert_eq!(m.cleanup_empty(), 1);
+        assert_eq!(m.room_count(), 0);
+
+        // Participant present -> kept.
+        let a = m.get_or_create("a");
+        a.join(1, name("alice"));
+        assert_eq!(m.cleanup_empty(), 0);
+        assert_eq!(m.room_count(), 1);
+        let kept = m.get_or_create("a");
+        assert!(Arc::ptr_eq(&a, &kept));
+
+        a.leave(1);
+        assert_eq!(m.cleanup_empty(), 1);
+        assert_eq!(m.room_count(), 0);
+    }
+
+    #[test]
+    fn manager_total_participants() {
+        let m = RoomManager::new();
+        let r1 = m.get_or_create("r1");
+        let r2 = m.get_or_create("r2");
+        assert_eq!(m.total_participants(), 0);
+        r1.join(1, name("alice"));
+        r1.join(2, name("bob"));
+        r2.join(3, name("carol"));
+        assert_eq!(m.total_participants(), 3);
+        r2.leave(3);
+        assert_eq!(m.total_participants(), 2);
     }
 
     #[test]
