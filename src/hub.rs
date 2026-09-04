@@ -4,14 +4,10 @@
 //! tracks connection counts and provides a typed API over any `Clone + Serialize`
 //! payload.
 
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-};
-
 use serde::Serialize;
 use tokio::sync::broadcast;
 
+use crate::counter::ConnectionCounter;
 use crate::error::WsError;
 
 /// A typed broadcast hub for WebSocket messages.
@@ -43,7 +39,7 @@ where
     T: Clone + Serialize + Send + Sync + 'static,
 {
     tx: broadcast::Sender<T>,
-    connection_count: Arc<AtomicU64>,
+    connection_count: ConnectionCounter,
 }
 
 impl<T> Clone for BroadcastHub<T>
@@ -53,7 +49,7 @@ where
     fn clone(&self) -> Self {
         Self {
             tx: self.tx.clone(),
-            connection_count: Arc::clone(&self.connection_count),
+            connection_count: self.connection_count.clone(),
         }
     }
 }
@@ -80,7 +76,7 @@ where
         let (tx, _) = broadcast::channel(capacity);
         Self {
             tx,
-            connection_count: Arc::new(AtomicU64::new(0)),
+            connection_count: ConnectionCounter::new(),
         }
     }
 
@@ -116,7 +112,7 @@ where
 
     /// Current number of tracked connections.
     pub fn connection_count(&self) -> u64 {
-        self.connection_count.load(Ordering::Relaxed)
+        self.connection_count.get()
     }
 
     /// Atomically increment the connection counter.
@@ -125,44 +121,12 @@ where
     /// [`WsError::TooManyConnections`] when the limit would be exceeded and
     /// does not increment.
     pub fn increment_connections(&self, max: Option<usize>) -> Result<u64, WsError> {
-        if let Some(limit) = max {
-            // Use compare-exchange loop to avoid race.
-            loop {
-                let current = self.connection_count.load(Ordering::Relaxed);
-                if current as usize >= limit {
-                    return Err(WsError::TooManyConnections);
-                }
-                match self.connection_count.compare_exchange(
-                    current,
-                    current + 1,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => return Ok(current + 1),
-                    Err(_) => continue,
-                }
-            }
-        } else {
-            Ok(self.connection_count.fetch_add(1, Ordering::Relaxed) + 1)
-        }
+        self.connection_count.increment(max)
     }
 
     /// Atomically decrement the connection counter (saturating).
     pub fn decrement_connections(&self) -> u64 {
-        // Use fetch_update to saturate at 0.
-        let prev = self
-            .connection_count
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                if v == 0 {
-                    None
-                } else {
-                    Some(v - 1)
-                }
-            });
-        match prev {
-            Ok(v) if v > 0 => v - 1,
-            _ => 0,
-        }
+        self.connection_count.decrement()
     }
 
     /// Number of active receivers.

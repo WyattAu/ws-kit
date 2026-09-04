@@ -38,10 +38,15 @@
 
 pub mod codec;
 pub mod config;
+mod counter;
 pub mod error;
 pub mod extractor;
 pub mod hub;
 pub mod room;
+
+// Model-checking tests for `counter` — compiled only under `--cfg loom`.
+#[cfg(loom)]
+mod loom_tests;
 
 // Re-exports for ergonomic use
 pub use codec::{Codec, JsonCodec};

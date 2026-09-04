@@ -54,3 +54,23 @@ let m = Msg { t: "hi".into() };
 let s = m.encode();
 let d = Msg::decode(&s).unwrap();
 ```
+
+## Concurrency testing
+
+The connection counter's atomic logic (bounded increment CAS loop, saturating
+decrement) is model-checked with [loom](https://crates.io/crates/loom) under
+`--cfg loom` — see `src/loom_tests.rs`:
+
+```sh
+RUSTFLAGS="--cfg loom" cargo test --release --lib --no-default-features -- loom
+```
+
+(`--no-default-features` drops the `axum` stack — `tokio-tungstenite` does
+not compile under `--cfg loom`; the models only need the counter.)
+
+Loom exhaustively explores bounded interleavings and proves: balanced
+increment/decrement pairs always return the count to zero, the count never
+goes negative, and the connection limit is never exceeded under races.
+What loom does *not* cover: `tokio::sync::broadcast` and `DashMap`
+internals (not loom-compatible) — those are trusted via tokio's and
+dashmap's own concurrency testing.

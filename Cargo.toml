@@ -28,6 +28,14 @@ uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { version = "1", features = ["full"] }
 proptest = "1"
 
+# Model-checking tests (see src/loom_tests.rs). Activated only with
+# RUSTFLAGS="--cfg loom"; the lib swaps std atomics for loom's equivalents.
+[target.'cfg(loom)'.dependencies]
+loom = { version = "0.7", features = ["futures"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
 [features]
 default = ["axum"]
 axum = ["dep:axum", "dep:tower", "dep:http"]
