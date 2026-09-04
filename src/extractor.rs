@@ -379,10 +379,7 @@ mod tests {
         use http::{HeaderMap, Request};
 
         fn parts_with(headers: HeaderMap, uri: &str) -> http::request::Parts {
-            let req = Request::builder()
-                .uri(uri)
-                .body(())
-                .unwrap();
+            let req = Request::builder().uri(uri).body(()).unwrap();
             let (mut parts, _) = req.into_parts();
             parts.headers = headers;
             parts

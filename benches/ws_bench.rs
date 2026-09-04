@@ -12,7 +12,7 @@ use std::time::Instant;
 use ws_kit::{codec::JsonCodec, hub::BroadcastHub, room::RoomManager};
 
 #[cfg(feature = "criterion")]
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, Criterion};
 
 #[cfg(feature = "criterion")]
 fn bench_hub_broadcast(c: &mut Criterion) {
@@ -70,7 +70,12 @@ fn bench_codec(c: &mut Criterion) {
 }
 
 #[cfg(feature = "criterion")]
-criterion_group!(benches, bench_hub_broadcast, bench_room_get_or_create, bench_codec);
+criterion_group!(
+    benches,
+    bench_hub_broadcast,
+    bench_room_get_or_create,
+    bench_codec
+);
 #[cfg(feature = "criterion")]
 criterion_main!(benches);
 

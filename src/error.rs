@@ -42,9 +42,18 @@ mod tests {
 
     #[test]
     fn display_messages() {
-        assert_eq!(WsError::AuthMissing.to_string(), "authentication token missing");
-        assert_eq!(WsError::AuthInvalid.to_string(), "authentication token invalid");
-        assert_eq!(WsError::TooManyConnections.to_string(), "too many connections");
+        assert_eq!(
+            WsError::AuthMissing.to_string(),
+            "authentication token missing"
+        );
+        assert_eq!(
+            WsError::AuthInvalid.to_string(),
+            "authentication token invalid"
+        );
+        assert_eq!(
+            WsError::TooManyConnections.to_string(),
+            "too many connections"
+        );
         assert_eq!(WsError::BroadcastFull.to_string(), "broadcast channel full");
         assert_eq!(WsError::InvalidMessage.to_string(), "invalid message");
         assert_eq!(WsError::Closed.to_string(), "connection closed");

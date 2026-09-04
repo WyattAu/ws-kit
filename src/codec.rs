@@ -3,7 +3,7 @@
 //! [`Codec`] provides `encode`/`decode` for WebSocket text frames. A blanket
 //! implementation via `serde_json` is provided for any `Serialize + DeserializeOwned`.
 
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Serialize};
 
 use crate::error::WsError;
 

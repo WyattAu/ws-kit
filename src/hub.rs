@@ -5,8 +5,8 @@
 //! payload.
 
 use std::sync::{
-    Arc,
     atomic::{AtomicU64, Ordering},
+    Arc,
 };
 
 use serde::Serialize;
@@ -153,7 +153,11 @@ where
         let prev = self
             .connection_count
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                if v == 0 { None } else { Some(v - 1) }
+                if v == 0 {
+                    None
+                } else {
+                    Some(v - 1)
+                }
             });
         match prev {
             Ok(v) if v > 0 => v - 1,
