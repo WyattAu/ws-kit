@@ -4,7 +4,6 @@ Generic authenticated typed WebSocket toolkit for Rust — `BroadcastHub`, `Room
 
 ## Features
 
-- `std` (default) — `std` support for `thiserror`
 - `axum` (default) — Axum `ws` + `tower`, `TokenExtractor::extract_token(&Parts, _)`
 - `tracing` — tracing instrumentation
 
