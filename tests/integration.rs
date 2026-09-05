@@ -1,3 +1,12 @@
+// Tests exercise hostile and failure paths directly; unwrap/expect, slicing,
+// and panicking asserts are the test signal here.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};

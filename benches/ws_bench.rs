@@ -1,3 +1,12 @@
+// Benchmarks run on fixed, known-good inputs; unwrap failures abort the
+// bench run visibly, which is the desired behavior here.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+
 //! Benchmarks for ws-kit — BroadcastHub, RoomManager, and codec.
 //!
 //! This file is `harness = false` and provides a manual benchmark so
