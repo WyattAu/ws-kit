@@ -23,14 +23,14 @@ jobs:
       miri: false
       bench-regression: true
 
-      # Repo-specific: loom model-checks live in src/loom_tests.rs (lib target).
-      # --no-default-features drops the axum stack: tokio-tungstenite does not
-      # compile under --cfg loom (see README "Concurrency testing").
-      loom:
-        runs-on: ubuntu-latest
-        steps:
-          - uses: actions/checkout@v4
-          - uses: dtolnay/rust-toolchain@stable
-          - uses: Swatinem/rust-cache@v2
-          - name: loom models (lib)
-            run: RUSTFLAGS="--cfg loom" cargo test --release --lib --no-default-features -- --test-threads=1 loom
+  # Repo-specific: loom model-checks live in src/loom_tests.rs (lib target).
+  # --no-default-features drops the axum stack: tokio-tungstenite does not
+  # compile under --cfg loom (see README "Concurrency testing").
+  loom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: loom models (lib)
+        run: RUSTFLAGS="--cfg loom" cargo test --release --lib --no-default-features -- --test-threads=1 loom
