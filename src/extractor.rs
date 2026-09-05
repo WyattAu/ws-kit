@@ -156,12 +156,19 @@ impl TokenExtractor {
     }
 
     fn parse_bearer(s: &str) -> Option<String> {
-        // Case-insensitive "Bearer " prefix
-        if s.len() < 7 {
+        // Case-insensitive "Bearer " prefix. Byte slicing is safe here: the
+        // prefix bytes and the single separating space are all ASCII, and
+        // `is_char_boundary(7)` guarantees `s[7..]` starts on a code point
+        // edge. A multibyte header value that merely happens to be >= 7
+        // *bytes* long but has no boundary at 7 is rejected, not sliced.
+        let bytes = s.as_bytes();
+        if bytes.len() < 7 {
             return None;
         }
-        let prefix = &s[..7];
-        if !prefix.eq_ignore_ascii_case("bearer ") {
+        if !bytes[..7].eq_ignore_ascii_case(b"bearer ") {
+            return None;
+        }
+        if !s.is_char_boundary(7) {
             return None;
         }
         let token = s[7..].trim();
@@ -273,6 +280,21 @@ fn hex_val(c: char) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_bearer_multibyte_no_panic() {
+        // Regression (REQ-WSKIT-001 fuzz finding): a >= 7-byte header value
+        // whose 7th byte lands mid-code-point must be rejected, never panic.
+        let evil = "Beéerer x"; // 9 bytes, char boundary at 7? 'é' is 2 bytes — boundary check must gate
+        assert_eq!(TokenExtractor::parse_bearer(evil), None);
+        let evil2 = "Bearération token"; // 7-byte prefix matches "Bearer " in ASCII bytes? no — 'é' at byte 4
+        assert_eq!(TokenExtractor::parse_bearer(evil2), None);
+        // Boundary at 7 with ASCII prefix: still works.
+        assert_eq!(
+            TokenExtractor::parse_bearer("Bearer café"),
+            Some("café".to_string())
+        );
+    }
 
     #[test]
     fn parse_bearer_ok() {
