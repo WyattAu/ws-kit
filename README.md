@@ -74,3 +74,7 @@ goes negative, and the connection limit is never exceeded under races.
 What loom does *not* cover: `tokio::sync::broadcast` and `DashMap`
 internals (not loom-compatible) — those are trusted via tokio's and
 dashmap's own concurrency testing.
+
+## Security
+
+Threat model: [THREAT-MODEL.md](THREAT-MODEL.md).
