@@ -165,7 +165,10 @@ impl TokenExtractor {
         if bytes.len() < 7 {
             return None;
         }
-        if !bytes[..7].eq_ignore_ascii_case(b"bearer ") {
+        if !bytes
+            .get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"bearer "))
+        {
             return None;
         }
         if !s.is_char_boundary(7) {

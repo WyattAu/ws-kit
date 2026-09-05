@@ -6,10 +6,11 @@
 //! Generic authenticated typed WebSocket toolkit.
 //!
 //! Provides:
-//! - [`config::WsConfig`] — heartbeat, broadcast capacity, connection limits with builder.
+//! - [`config::WsConfig`] — heartbeat, broadcast capacity, connection limits, Origin allow-list with builder.
 //! - [`hub::BroadcastHub`] — typed `broadcast::Sender<T>` wrapper with connection counting, generic over `T: Clone + Serialize`.
 //! - [`room::RoomManager`] / [`room::Room`] — DashMap-backed room isolation with participant tracking.
 //! - [`extractor::TokenExtractor`] — configurable token extraction (`Authorization: Bearer`, `?token=`, `?access_token=`, `Cookie`).
+//! - [`origin_allowed_in_parts`] — Origin validation for the upgrade handshake (CSWSH defense, REQ-WSKIT-200).
 //! - [`codec::Codec`] / [`codec::JsonCodec`] — JSON encode/decode via serde.
 //!
 //! ## Quick start
@@ -42,6 +43,7 @@ mod counter;
 pub mod error;
 pub mod extractor;
 pub mod hub;
+pub mod origin;
 pub mod room;
 
 // Model-checking tests for `counter` — compiled only under `--cfg loom`.
@@ -54,4 +56,8 @@ pub use config::{WsConfig, WsConfigBuilder};
 pub use error::WsError;
 pub use extractor::{TokenExtractor, TokenSourceKind, WsAuthError};
 pub use hub::BroadcastHub;
+pub use origin::{normalize_origin, origin_allowed};
 pub use room::{Room, RoomManager};
+
+#[cfg(feature = "axum")]
+pub use origin::origin_allowed_in_parts;

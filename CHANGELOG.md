@@ -5,6 +5,30 @@ Changelog](https://keepachangelog.com/) — versions follow [semver](https://sem
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-05
+
+### Added
+
+- Opt-in Origin validation for the WebSocket upgrade handshake (CSWSH
+  defense, REQ-WSKIT-200/201):
+  - `WsConfig::allowed_origins` field + `WsConfigBuilder::allow_origin` /
+    `allowed_origins`.
+  - `origin_allowed_in_parts(&Parts, &allowed)` — call in the upgrade
+    handler **before** `on_upgrade`; missing or mismatched `Origin` should
+    map to `403 Forbidden`.
+  - `normalize_origin` — lowercase scheme/host, default ports (`http`/`ws`
+    80, `https`/`wss` 443) omitted; exact match only, **no wildcard or
+    suffix matching in v1**.
+  - **Default (empty list) remains allow-all** — documented residual risk
+    (REQ-WSKIT-201); existing users are not broken. Set the list to defend
+    against cross-site WebSocket hijacking when auth rides cookies.
+
+### Fixed
+
+- Pre-existing `clippy::indexing_slicing` violation in
+  `TokenExtractor::parse_bearer` (`bytes.get(..7)` instead of unchecked
+  slicing) — the CI `-D warnings` gate now passes.
+
 ## [0.2.1] - 2026-09-04
 
 ### Fixed

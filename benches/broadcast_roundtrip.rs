@@ -13,7 +13,7 @@
 
 use std::hint::black_box;
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use ws_kit::hub::BroadcastHub;
 
 fn bench_roundtrip(c: &mut Criterion) {

@@ -44,6 +44,26 @@ let ex = TokenExtractor::default(); // Bearer, ?token=, ?access_token=
 let tok = ex.extract_from_parts(Some("Bearer xyz"), None, "token=qry");
 ```
 
+Origin validation (CSWSH defense):
+
+```rust
+use ws_kit::config::WsConfig;
+use ws_kit::origin_allowed_in_parts;
+use axum::http::StatusCode;
+
+// Default (empty list) ALLOWS ALL origins — set your real origins:
+let cfg = WsConfig::builder().allow_origin("https://app.example.com").build();
+
+// In the upgrade handler, BEFORE ws.on_upgrade:
+if !origin_allowed_in_parts(&parts, &cfg.allowed_origins) {
+    return StatusCode::FORBIDDEN.into_response();
+}
+```
+
+Exact match after normalization (lowercase scheme/host, default ports
+omitted); no wildcard or suffix matching. See [REQUIREMENTS.md](REQUIREMENTS.md)
+(REQ-WSKIT-200/201) and [THREAT-MODEL.md](THREAT-MODEL.md).
+
 Codec:
 
 ```rust

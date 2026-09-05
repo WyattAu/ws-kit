@@ -30,6 +30,23 @@ sharing hub and room state.
 | T6 | Connection-count exhaustion | DoS | `BroadcastHub::increment_connections` | Atomic counter with optional max; refusal returns `WsError` | `tests/integration.rs::hub_connection_count_limit` (default cap 1000, `WsConfig`) |
 | T7 | Cross-room message leakage | Info disclosure | `Room` / `RoomManager` | Per-room isolated `broadcast::Sender`; cleanup drops the sender | `tests/integration.rs::room_isolation`, `room_cleanup`, `room_manager_basic` |
 | T8 | Concurrent subscribe/broadcast races | Tampering | hub/room internals | `tokio::sync::broadcast` semantics; loom-modelled | `src/loom_tests.rs` (loom feature); `tests/integration.rs::hub_integration_with_config` |
+| T9 | Cross-site WebSocket hijacking (CSWSH): malicious page opens an upgrade riding the victim's cookies/ambient auth | Spoofing / Elevation | upgrade handshake (`Origin` header) | REQ-WSKIT-200: opt-in Origin allow-list (`WsConfig::allowed_origins`); non-empty list → missing/mismatched Origin rejected **403 before `on_upgrade`**; exact match after normalization (lowercase scheme/host, default ports omitted); no wildcard/suffix matching | `tests/integration.rs::origin_upgrade::req_wskit_200_*` (allowed→101, disallowed/missing→403, port-normalized, no-suffix); unit `src/origin.rs::origin_allowed_*`, `normalize_origin_*` |
+
+## CLOSED RISKS (mitigated — cited by tests)
+
+- **CLOSED-1 (was OPEN-3) — no origin check on the upgrade request** —
+  closed in **0.3.0** (REQ-WSKIT-200). `WsConfig::allowed_origins` +
+  `origin_allowed_in_parts` validate the browser-supplied `Origin` header
+  at upgrade time; with a non-empty list, a missing or mismatched Origin is
+  rejected 403 before `on_upgrade` (tests:
+  `tests/integration.rs::origin_upgrade::req_wskit_200_*`, unit
+  `src/origin.rs`). **Residual (accepted, REQ-WSKIT-201): the default is an
+  empty allow-list = allow all**, preserving 0.2.x behavior — CSWSH stays
+  reachable for integrators who never set the list, exactly as before. The
+  check is also opt-in at the handler site: ws-kit provides the decision
+  fn; wiring it into the upgrade handler (before `on_upgrade`) is shown in
+  the integration tests and remains integrator-owned, like all middleware
+  ordering in axum.
 
 ## OPEN RISKS (missing mitigations — not fabricated)
 
@@ -43,10 +60,6 @@ sharing hub and room state.
   non-ASCII token) decodes to mojibake and is then rejected downstream —
   fail-closed, but a correctness/interoperability gap between header and
   query sources.
-- **OPEN-3 — no origin check on the upgrade request.** Cross-site WebSocket
-  hijacking (CSWSH) protection (Origin allow-list) is absent; authentication
-  via cookie source makes this reachable. Declared integrator scope, but
-  cookie support + no origin guard is a sharp edge.
 - **OPEN-4 — `max_connections = 0` means unlimited.** The config documents
   the sentinel; nothing prevents a caller building `WsConfig` with 0 by
   accident, and no test pins the "0 = unlimited" semantics.

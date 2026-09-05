@@ -225,3 +225,140 @@ fn extractor_axum_parts() {
         Some("axum_token".to_string())
     );
 }
+
+// --- Origin validation (REQ-WSKIT-200/201) — axum test server ---
+
+#[cfg(feature = "axum")]
+mod origin_upgrade {
+    use axum::extract::ws::WebSocketUpgrade;
+    use axum::extract::State;
+    use axum::http::request::Parts;
+    use axum::http::StatusCode;
+    use axum::response::{IntoResponse, Response};
+    use axum::routing::get;
+    use axum::Router;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Upgrade handler: validates Origin (REQ-WSKIT-200) BEFORE on_upgrade;
+    /// a failed check short-circuits with 403 — the socket is never upgraded.
+    async fn ws_handler(
+        State(allowed): State<Vec<String>>,
+        parts: Parts,
+        ws: WebSocketUpgrade,
+    ) -> Response {
+        if !ws_kit::origin_allowed_in_parts(&parts, &allowed) {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+        ws.on_upgrade(|_socket| async {})
+    }
+
+    async fn spawn_ws_app(allowed_origins: Vec<String>) -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = Router::new()
+            .route("/ws", get(ws_handler))
+            .with_state(allowed_origins);
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        port
+    }
+
+    /// Raw HTTP upgrade request; returns the response status code.
+    async fn handshake_status(port: u16, origin: Option<&str>) -> u16 {
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let origin_line = origin
+            .map(|o| format!("Origin: {o}\r\n"))
+            .unwrap_or_default();
+        let req = format!(
+            "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n\
+             Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+             Sec-WebSocket-Version: 13\r\n{origin_line}\r\n"
+        );
+        stream.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 512];
+        loop {
+            let n = stream.read(&mut chunk).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&buf)
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
+    }
+
+    #[tokio::test]
+    async fn req_wskit_200_allowed_origin_passes_upgrade() {
+        let port = spawn_ws_app(vec!["https://example.com".to_string()]).await;
+        assert_eq!(
+            handshake_status(port, Some("https://example.com")).await,
+            101
+        );
+    }
+
+    #[tokio::test]
+    async fn req_wskit_200_disallowed_origin_rejected_403_pre_upgrade() {
+        let port = spawn_ws_app(vec!["https://example.com".to_string()]).await;
+        assert_eq!(handshake_status(port, Some("https://evil.com")).await, 403);
+    }
+
+    #[tokio::test]
+    async fn req_wskit_200_missing_origin_rejected_403() {
+        let port = spawn_ws_app(vec!["https://example.com".to_string()]).await;
+        assert_eq!(handshake_status(port, None).await, 403);
+    }
+
+    #[tokio::test]
+    async fn req_wskit_200_port_normalized_match_passes() {
+        let port = spawn_ws_app(vec!["https://example.com".to_string()]).await;
+        // https default port 443 is omitted during normalization
+        assert_eq!(
+            handshake_status(port, Some("https://example.com:443")).await,
+            101
+        );
+        // non-default ports do NOT collapse to the bare entry
+        assert_eq!(
+            handshake_status(port, Some("https://example.com:8443")).await,
+            403
+        );
+    }
+
+    #[tokio::test]
+    async fn req_wskit_200_no_wildcard_suffix_match() {
+        let port = spawn_ws_app(vec!["https://example.com".to_string()]).await;
+        assert_eq!(
+            handshake_status(port, Some("https://evil-example.com")).await,
+            403
+        );
+        assert_eq!(
+            handshake_status(port, Some("https://example.com.evil.com")).await,
+            403
+        );
+        assert_eq!(
+            handshake_status(port, Some("https://api.example.com")).await,
+            403
+        );
+    }
+
+    #[tokio::test]
+    async fn req_wskit_201_default_config_allows_all_origins() {
+        // Empty allow-list (default) = allow all, even a missing Origin —
+        // documented residual risk, preserved 0.2.x behavior.
+        let port = spawn_ws_app(Vec::new()).await;
+        assert_eq!(
+            handshake_status(port, Some("https://any-site.dev")).await,
+            101
+        );
+        assert_eq!(handshake_status(port, None).await, 101);
+    }
+}
