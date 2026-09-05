@@ -27,6 +27,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
 
 # Model-checking tests (see src/loom_tests.rs). Activated only with
 # RUSTFLAGS="--cfg loom"; the lib swaps std atomics for loom's equivalents.
@@ -43,6 +44,10 @@ tracing = ["dep:tracing"]
 
 [[bench]]
 name = "ws_bench"
+harness = false
+
+[[bench]]
+name = "broadcast_roundtrip"
 harness = false
 
 [lints.clippy]

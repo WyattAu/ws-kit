@@ -21,6 +21,7 @@ jobs:
       loom: false
       wasm: false
       miri: false
+      bench-regression: true
 
   # Repo-specific: loom model-checks live in src/loom_tests.rs (lib target).
   loom:
