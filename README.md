@@ -1,5 +1,9 @@
 # ws-kit
 
+[![docs.rs](https://docs.rs/ws-kit/badge.svg)](https://docs.rs/ws-kit)
+[![crates.io](https://img.shields.io/crates/v/ws-kit.svg)](https://crates.io/crates/ws-kit)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+
 Generic authenticated typed WebSocket toolkit for Rust — `BroadcastHub`, `RoomManager`, heartbeat, and token extraction for Axum.
 
 ## Features
@@ -102,3 +106,10 @@ Threat model: [THREAT-MODEL.md](THREAT-MODEL.md).
 ## Performance
 
 Measured hot-path SLOs and allocation profile: [PERF-SLO.md](PERF-SLO.md). Benchmarks run in CI (non-gating regression visibility against the saved `ci` baseline).
+
+| Hot path (criterion mean, 2026-09, 6-core x86_64) | P50 | SLO |
+|---|---|---|
+| `BroadcastHub` broadcast→recv round-trip, 1 receiver | **99.1 ns** | < 150 ns |
+| fan-out per receiver (100–1000 receivers) | 42–44 ns | sub-linear scaling |
+
+The broadcast ring is pre-allocated at channel construction — steady-state `broadcast()` performs no per-message allocation beyond the caller's message value.

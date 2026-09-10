@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, allow(unused_attributes))]
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
@@ -60,4 +62,5 @@ pub use origin::{normalize_origin, origin_allowed};
 pub use room::{Room, RoomManager};
 
 #[cfg(feature = "axum")]
+#[cfg_attr(docsrs, doc(cfg(feature = "axum")))]
 pub use origin::origin_allowed_in_parts;
