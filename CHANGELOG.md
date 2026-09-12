@@ -5,6 +5,17 @@ Changelog](https://keepachangelog.com/) — versions follow [semver](https://sem
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-12
+
+### Added
+
+- `tests/config_matrix.rs` — per-knob behavior matrix for all 7 knobs
+  (`WsConfig` 4 + `CompressionConfig` 3): broadcast-capacity lag
+  eviction, room plumbing, max-connections threading, origin
+  allow-list, compression level/size/threshold contrasts. Dead-knob
+  report: `WsConfig::heartbeat_interval` is stored but never read (no
+  heartbeat task exists in the library) — pinned inert.
+
 ## [0.4.1] - 2026-09-12
 
 ### Added
