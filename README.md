@@ -262,7 +262,13 @@ Threat model: [THREAT-MODEL.md](THREAT-MODEL.md).
 
 ## Performance
 
-Measured hot-path SLOs and allocation profile: [PERF-SLO.md](PERF-SLO.md). Benchmarks run in CI (non-gating regression visibility against the saved `ci` baseline).
+Measured hot-path SLOs and allocation profile: [PERF-SLO.md](PERF-SLO.md),
+with every numeric claim mapped to its proof artifact in
+[CLAIMS.md](CLAIMS.md). Benchmarks run in CI (non-gating regression
+visibility against the saved `ci` baseline); the allocation profile is
+proven by a counting-allocator test (`tests/zero_alloc_frame_rx.rs`) and
+the hot paths are pinned by an iai-callgrind instruction gate
+(`benches/iai_hot_path.rs`).
 
 | Hot path (criterion mean, 6-core x86_64) | P50 | SLO |
 |---|---|---|

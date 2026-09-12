@@ -5,6 +5,31 @@ Changelog](https://keepachangelog.com/) — versions follow [semver](https://sem
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-12
+
+### Added
+
+- **Claims proof-back** ([CLAIMS.md](CLAIMS.md)): every numeric performance
+  claim in README/PERF-SLO mapped to its proof artifact.
+- `benches/iai_hot_path.rs` — iai-callgrind instruction-count gate for the
+  hot paths: `Frame` text/binary round-trip and 1000-receiver fan-out
+  (CI-gated; needs valgrind to execute locally). 2026-09-12 run: binary
+  (21199 instr) ≤ text (21399) — the "binary is not slower" claim holds at
+  the instruction level.
+- `tests/zero_alloc_frame_rx.rs` — counting-allocator proof of the
+  allocation profile: steady-state binary rx is allocation-free, text rx
+  allocates exactly once (the `String` clone), `broadcast()` allocates only
+  the caller's message value, owned-payload → `Frame` conversions are moves.
+- Compression ratios re-verified (11.9× JSON 2 KiB; 125.6× ≈ 126× binary
+  16 KiB); PERF-SLO table raw/compressed sizes corrected to the bench
+  output (16448 B / 131 B).
+
+### Changed
+
+- PERF-SLO.md allocation profile upgraded from "code reading" to "proven"
+  with test references; retired the "not yet verified with a counting
+  allocator" disclaimer.
+
 ## [0.4.0] - 2026-09-12
 
 ### Added

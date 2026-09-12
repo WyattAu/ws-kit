@@ -1,6 +1,6 @@
 [package]
 name = "ws-kit"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -38,6 +38,8 @@ proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 # `Frame::Binary(Bytes)` construction in integration tests.
 bytes = "1"
+# Deterministic CI perf gate (instruction counts; needs valgrind to run).
+iai-callgrind = "0.16"
 
 # Model-checking tests (see src/loom_tests.rs). Activated only with
 # RUSTFLAGS="--cfg loom"; the lib swaps std atomics for loom's equivalents.
@@ -77,6 +79,12 @@ harness = false
 
 [[bench]]
 name = "broadcast_roundtrip"
+harness = false
+
+# Deterministic CI perf gate (instruction counts under valgrind). Not run
+# locally unless valgrind is installed; see benches/iai_hot_path.rs.
+[[bench]]
+name = "iai_hot_path"
 harness = false
 
 [[bench]]
