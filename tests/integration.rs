@@ -9,14 +9,16 @@
 
 use std::time::Duration;
 
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use ws_kit::{
-    codec::{Codec, JsonCodec},
+    codec::{Codec, Frame, JsonCodec},
     config::WsConfig,
     error::WsError,
     extractor::{TokenExtractor, TokenSourceKind},
     hub::BroadcastHub,
     room::RoomManager,
+    stats::StatsRecorder,
 };
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -136,7 +138,7 @@ async fn room_isolation() {
     let mut rx1 = r1.subscribe();
     let mut rx2 = r2.subscribe();
     r1.broadcast("msg1".to_string()).unwrap();
-    assert_eq!(rx1.recv().await.unwrap(), "msg1");
+    assert_eq!(rx1.recv().await.unwrap(), Frame::from("msg1"));
     // r2 must not receive
     let res = tokio::time::timeout(Duration::from_millis(20), rx2.recv()).await;
     assert!(res.is_err());
@@ -149,6 +151,87 @@ fn room_cleanup() {
     // No participants/receivers => empty => cleanup removes
     assert_eq!(m.cleanup(), 1);
     assert_eq!(m.room_count(), 0);
+}
+
+// --- Binary frames (0.4.0) ---
+
+#[tokio::test]
+async fn binary_frame_routes_through_hub() {
+    let hub = BroadcastHub::<Frame>::new(16);
+    let mut rx1 = hub.subscribe();
+    let mut rx2 = hub.subscribe();
+    let payload = Bytes::from_static(&[0x00, 0xff, 0x7f, 0x80]);
+    let n = hub.broadcast(Frame::Binary(payload.clone())).unwrap();
+    assert_eq!(n, 2);
+    for rx in [&mut rx1, &mut rx2] {
+        let got = rx.recv().await.unwrap();
+        assert!(got.is_binary(), "hub must not re-interpret binary as text");
+        assert_eq!(got.as_bytes(), &payload[..]);
+    }
+}
+
+#[tokio::test]
+async fn binary_frame_routes_through_room() {
+    let m = RoomManager::new();
+    let room = m.get_or_create("bin");
+    let mut rx = room.subscribe();
+    room.join(1, "alice".to_string());
+    room.broadcast(vec![9u8; 300]).unwrap();
+    let got = rx.recv().await.unwrap();
+    assert!(got.is_binary());
+    assert_eq!(got.len(), 300);
+    // Text and binary interleave in arrival order on one channel.
+    room.broadcast("after".to_string()).unwrap();
+    assert_eq!(rx.recv().await.unwrap(), Frame::from("after"));
+}
+
+#[tokio::test]
+async fn frame_into_text_rejects_binary() {
+    let frame = Frame::binary(Bytes::from_static(&[0xff, 0xfe]));
+    assert_eq!(frame.into_text().unwrap_err(), WsError::InvalidMessage);
+}
+
+// --- Stats (0.4.0) ---
+
+#[tokio::test]
+async fn stats_recorder_counts_connections_rooms_and_traffic() {
+    let stats = StatsRecorder::new();
+    stats.inc_connections();
+    stats.inc_connections();
+    stats.dec_connections();
+    stats.record_message_in(42);
+
+    let cfg = WsConfig::builder().broadcast_capacity(8).build();
+    let manager = ws_kit::room::RoomManager::with_stats(&cfg, stats.clone());
+    {
+        let room = manager.get_or_create("lobby");
+        let mut rx = room.subscribe();
+        room.broadcast("12345".to_string()).unwrap();
+        assert_eq!(rx.recv().await.unwrap(), Frame::from("12345"));
+    }
+    manager.remove("lobby");
+
+    let snap = stats.snapshot();
+    assert_eq!(snap.connections, 1);
+    assert_eq!(snap.rooms, 0, "create/remove balanced");
+    assert_eq!(snap.messages_out, 1);
+    assert_eq!(snap.bytes_out, 5);
+    assert_eq!(snap.messages_in, 1, "room roll-up + manual");
+    assert_eq!(snap.bytes_in, 42);
+    assert_eq!(snap.per_room.get("lobby").unwrap().messages_out, 1);
+}
+
+#[tokio::test]
+async fn stats_record_broadcast_drops() {
+    let stats = StatsRecorder::new();
+    let cfg = WsConfig::default();
+    let manager = ws_kit::room::RoomManager::with_stats(&cfg, stats.clone());
+    let room = manager.get_or_create("dead");
+    // No receivers: broadcast fails and counts as a drop.
+    room.broadcast("lost".to_string()).unwrap_err();
+    let snap = stats.snapshot();
+    assert_eq!(snap.drops, 1);
+    assert_eq!(snap.per_room.get("dead").unwrap().drops, 1);
 }
 
 // --- Extractor ---

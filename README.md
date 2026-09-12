@@ -9,7 +9,10 @@ Generic authenticated typed WebSocket toolkit for Rust — `BroadcastHub`, `Room
 ## Features
 
 - `axum` (default) — Axum `ws` + `tower`, `TokenExtractor::extract_token(&Parts, _)`
-- `tracing` — tracing instrumentation
+- `compression` — application-layer DEFLATE for message payloads (see [Compression](#compression))
+- `redis` — multi-node room fan-out over Redis pub/sub (see [Multi-node rooms](#multi-node-rooms-redis))
+- `metrics` — emit the [`StatsRecorder`](#stats--backpressure) counters through the `metrics` facade
+- `tracing` — deprecated no-op (kept for 0.3.x compatibility)
 
 ## Quick start
 
@@ -30,14 +33,16 @@ async fn main() {
 }
 ```
 
-Rooms:
+Rooms (text **and** binary since 0.4.0):
 
 ```rust
 use ws_kit::room::RoomManager;
+use ws_kit::codec::Frame;
 let m = RoomManager::new();
 let room = m.get_or_create("lobby");
-room.join("alice");
-room.broadcast("hello".to_string()).unwrap();
+room.join(1, "alice".to_string());
+room.broadcast("hello".to_string()).unwrap();          // text
+room.broadcast(vec![0xde, 0xad, 0xbe, 0xef]).unwrap(); // binary — zero re-encode
 ```
 
 Token extraction:
@@ -79,6 +84,158 @@ let s = m.encode();
 let d = Msg::decode(&s).unwrap();
 ```
 
+## Binary messages (0.4.0)
+
+The wire message model is [`Frame`](https://docs.rs/ws-kit/latest/ws_kit/codec/enum.Frame.html):
+
+- `Frame::Text(String)` — UTF-8 payloads; `Codec`/`JsonCodec` operate here.
+- `Frame::Binary(Bytes)` — opaque bytes, carried verbatim.
+
+Routing and room broadcast accept both (`impl Into<Frame>` — `String`,
+`&str`, `Bytes`, `Vec<u8>` convert with no re-encoding of owned payloads),
+and `BroadcastHub<Frame>` works out of the box (`Frame` is `Serialize`).
+
+**Security posture:** a `Frame::Binary` payload is *never* parsed as text
+or JSON by any ws-kit code path — the JSON decoders take `&str`, so the
+type system enforces the separation. Text is guaranteed UTF-8 end to end
+(`Frame::Text` can only be built from a `String`). Authentication
+(`TokenExtractor`) reads the HTTP upgrade request and is frame-kind-agnostic.
+
+## Compression
+
+Feature: `compression` (off by default; pulls `flate2` with the pure-Rust
+`miniz_oxide` backend — the crate stays `#![forbid(unsafe_code)]`).
+
+```rust
+use ws_kit::codec::Frame;
+use ws_kit::compression::{CompressionConfig, FrameCompressor};
+
+let c = FrameCompressor::new(CompressionConfig::default());
+let wire = c.compress_frame(Frame::from("repetitive payload ".repeat(100)))?;
+let restored = c.decompress_frame(wire)?; // == original frame
+```
+
+**Which layer — honest assessment:** the *right* layer for WebSocket
+compression is the `permessage-deflate` handshake extension (RFC 7692).
+The stack ws-kit builds on — `tokio-tungstenite`/`tungstenite` 0.29 (what
+axum 0.8 pulls) — does **not implement it** and exposes no extension hook
+to negotiate one. Rather than hand-roll an RFC 7692 state machine against
+frame internals ws-kit doesn't own, 0.4.0 ships an **application-layer**
+DEFLATE codec and says so:
+
+- Payloads ride ordinary **binary frames** with a 1-byte envelope
+  (`flags | deflate-or-identity`). Both endpoints must run ws-kit and opt
+  in — **browsers cannot use this** (they only speak `permessage-deflate`).
+  It is for Rust-to-Rust links (server ↔ ws-kit client/proxy/worker).
+- "Negotiation" is out-of-band configuration; for integrators signaling the
+  capability in a custom handshake header, `extension_accepted(Some(header))`
+  matches the `x-ws-kit-deflate` token case-insensitively.
+- **Decompression-bomb guard**: decompressed output is capped
+  *during* inflation (`CompressionConfig::max_size`, default 1 MiB) — a
+  compressed bomb never materializes in memory. Unknown envelope flags and
+  corrupt streams fail closed (`WsError::Compression`).
+- Oversharing is avoided on purpose: payloads below `min_size` (default
+  64 B) and incompressible payloads are sent as identity — compression
+  never *grows* the wire size.
+
+Measured on the built-in bench (`cargo bench --features compression --bench
+compression_roundtrip`, ratios are deterministic; absolute times vary with
+machine load): synthetic 2 KiB chat JSON → 174 B (**11.9×**); repetitive
+16 KiB binary → 130 B (**126×**).
+
+When a handshake-level `permessage-deflate` lands upstream in
+tokio-tungstenite/axum, `CompressionConfig` is the struct that gets wired
+through.
+
+## Multi-node rooms (Redis)
+
+Feature: `redis` (off by default). `RedisRoomRegistry` keeps rooms local
+(ordinary `RoomManager` semantics) and fans broadcasts out through Redis
+pub/sub, so clients connected to different nodes share rooms:
+
+```text
+       node A                                node B
+ ┌─────────────────┐                  ┌─────────────────┐
+ │ RoomManager (A) │                  │ RoomManager (B) │
+ │   room "lobby"  │                  │   room "lobby"  │
+ └───┬────────┬────┘                  └───┬────────┬────┘
+     │        │                           │        │
+  local    PUBLISH ws-kit:room:lobby   local    PUBLISH
+  sinks          │                     sinks        │
+     │        ┌───▼───────────────────────┼──────────┤
+     │        │            Redis          │          │
+     │        └───┬───────────────────────┴──────────┤
+     │            │     (pub/sub: best-effort)       │
+  every node PSUBSCRIBEs ws-kit:room:* → delivers each message
+  to its LOCAL room with that id (if hosted)
+```
+
+```rust,ignore
+let registry = std::sync::Arc::new(
+    ws_kit::redis_rooms::RedisRoomRegistry::connect("redis://127.0.0.1:6379").await?,
+);
+// One subscriber task per node, at startup:
+let sub = std::sync::Arc::clone(&registry);
+tokio::spawn(async move { let _ = sub.run_subscriber().await; });
+
+registry.broadcast("lobby", ws_kit::codec::Frame::from("hi fleet")).await?;
+```
+
+Topology details:
+
+- `broadcast(room, frame)` delivers to **local sinks and PUBLISHes once**;
+  each node's subscriber loop applies received messages to the local room
+  of that id — only if the node hosts it (remote traffic never
+  materializes rooms).
+- Each registry carries a random node id; **self-echoes are dropped**, so
+  a publisher's local receivers see each message exactly once.
+- Channel prefix is configurable (`connect_with_prefix`) — unrelated
+  deployments can share one Redis.
+
+**Delivery semantics — read before trusting:** Redis pub/sub is
+**at-most-once, best-effort**. No persistence, no replay, no acks; a node
+that is disconnected or lagging misses messages, permanently. ws-kit does
+*not* provide at-least-once delivery and makes no persistence claim. Use
+it for ephemeral fan-out (chat, presence, live notifications). For
+at-least-once, the `RoomRegistry` trait keeps the swap to Redis Streams
+(or any log) local to one module.
+
+**Trust boundary:** anyone who can PUBLISH to the channel prefix can
+inject messages into any room on any node; restrict with Redis ACLs /
+network isolation and use `rediss://` for untrusted links.
+
+Testing: the publish path is covered by a trait-mocked `ConnectionLike`
+(see `src/redis_rooms.rs`); the full two-node pub/sub loop runs as
+fixture-gated tests:
+
+```sh
+docker run -d -p 6379:6379 redis:7
+cargo test --features redis --test redis_rooms -- --ignored
+```
+
+## Stats & backpressure (0.4.0)
+
+`StatsRecorder` — cheap-to-clone, lock-free (atomics + sharded map):
+
+```rust
+use ws_kit::{config::WsConfig, room::RoomManager, stats::StatsRecorder};
+let stats = StatsRecorder::new();
+let manager = RoomManager::with_stats(&WsConfig::default(), stats.clone());
+// room broadcasts now record per-room + global messages_out/bytes_out/drops
+let snap = stats.snapshot();
+// snap.connections, snap.rooms, snap.messages_in/out, snap.bytes_in/out,
+// snap.drops, snap.per_room["lobby"]
+```
+
+Counters: **connections** (your accept loop: `inc_connections()` /
+`dec_connections()`), **rooms** (wired into `RoomManager`
+create/remove/cleanup), **messages/bytes in** (`record_message_in` — from
+your read loop), **messages/bytes out** (wired into room broadcasts),
+**drops** (broadcasts with no live receiver — backpressure that lost
+data). With the `metrics` feature the same numbers are emitted as
+`ws_kit_*` counters/gauges on the `metrics` facade for Prometheus/OTLP
+export — same pattern as the `breaker` crate.
+
 ## Concurrency testing
 
 The connection counter's atomic logic (bounded increment CAS loop, saturating
@@ -107,9 +264,10 @@ Threat model: [THREAT-MODEL.md](THREAT-MODEL.md).
 
 Measured hot-path SLOs and allocation profile: [PERF-SLO.md](PERF-SLO.md). Benchmarks run in CI (non-gating regression visibility against the saved `ci` baseline).
 
-| Hot path (criterion mean, 2026-09, 6-core x86_64) | P50 | SLO |
+| Hot path (criterion mean, 6-core x86_64) | P50 | SLO |
 |---|---|---|
 | `BroadcastHub` broadcast→recv round-trip, 1 receiver | **99.1 ns** | < 150 ns |
 | fan-out per receiver (100–1000 receivers) | 42–44 ns | sub-linear scaling |
+| `Frame`-based round-trip, 1 receiver (0.4.0 re-measure) | ~90 ns | text path unchanged; binary not slower |
 
 The broadcast ring is pre-allocated at channel construction — steady-state `broadcast()` performs no per-message allocation beyond the caller's message value.

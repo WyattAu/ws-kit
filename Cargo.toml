@@ -1,6 +1,6 @@
 [package]
 name = "ws-kit"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -19,11 +19,25 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 dashmap = "6"
+# `Frame::Binary(Bytes)`; the serde feature powers `#[derive(Serialize)]`
+# on `Frame` so it can ride the generic `BroadcastHub<T>`.
+bytes = { version = "1", features = ["serde"] }
+# `permessage-deflate` is not implemented by tokio-tungstenite/axum (0.29/0.8):
+# the `compression` feature provides an application-layer deflate codec via
+# flate2 (pure-Rust miniz_oxide backend — keeps the unsafe-free posture).
+flate2 = { version = "1", default-features = false, features = ["rust_backend"], optional = true }
+# Multi-node room fan-out (`redis` feature): tokio async + pubsub.
+redis = { version = "0.32", default-features = false, features = ["tokio-comp"], optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["std"], optional = true }
+# `metrics` facade emission (same pattern as the breaker crate).
+metrics = { version = "0.24", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
+# `Frame::Binary(Bytes)` construction in integration tests.
+bytes = "1"
 
 # Model-checking tests (see src/loom_tests.rs). Activated only with
 # RUSTFLAGS="--cfg loom"; the lib swaps std atomics for loom's equivalents.
@@ -36,9 +50,26 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 [features]
 default = ["axum"]
 axum = ["dep:axum", "dep:http"]
+# Application-layer DEFLATE compression for `Frame` payloads. NOT
+# permessage-deflate (unavailable in tokio-tungstenite 0.29 / axum 0.8 —
+# see the module docs in src/compression.rs for the honest assessment).
+compression = ["dep:flate2"]
+# Multi-node room fan-out over Redis pub/sub (at-most-once, best-effort —
+# see src/redis_rooms.rs module docs).
+redis = ["dep:redis", "dep:futures-util"]
+# Emit the same counters through the `metrics` facade (exportable to
+# Prometheus/OTLP via any metrics exporter).
+metrics = ["dep:metrics"]
 # Deprecated no-op (kept for 0.3.x compatibility): tracing support never
 # shipped — no code path references it. Do not add new dependencies on it.
 tracing = []
+
+[[test]]
+name = "integration"
+
+[[test]]
+name = "redis_rooms"
+required-features = ["redis"]
 
 [[bench]]
 name = "ws_bench"
@@ -47,6 +78,11 @@ harness = false
 [[bench]]
 name = "broadcast_roundtrip"
 harness = false
+
+[[bench]]
+name = "compression_roundtrip"
+harness = false
+required-features = ["compression"]
 
 [lints.clippy]
 unwrap_used = "deny"

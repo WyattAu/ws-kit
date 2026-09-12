@@ -5,6 +5,74 @@ Changelog](https://keepachangelog.com/) — versions follow [semver](https://sem
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-12
+
+### Added
+
+- **Binary message support** — the wire model is now `codec::Frame`:
+  `Frame::Text(String)` | `Frame::Binary(Bytes)`.
+  - Routing and room broadcast accept anything `Frame` converts from
+    (`String`, `&str`, `Bytes`, `Vec<u8>`, `&[u8]`) with zero re-encoding
+    of owned payloads; `BroadcastHub<Frame>` works out of the box.
+  - **Security posture (documented in `codec`):** binary payloads are never
+    parsed as text/JSON — the JSON decoders take `&str`, so the type system
+    enforces the separation; text is guaranteed UTF-8 end to end. Auth
+    extraction is frame-kind-agnostic (it reads the HTTP upgrade request).
+- **Compression** (`compression` feature, off by default) — application-layer
+  DEFLATE via `flate2` (pure-Rust backend; `forbid(unsafe_code)` preserved):
+  - `CompressionConfig` (level / `min_size` / `max_size`) +
+    `FrameCompressor::compress_frame` / `decompress_frame` over a 1-byte
+    envelope inside `Frame::Binary`.
+  - **This is not `permessage-deflate`:** tokio-tungstenite 0.29 / axum 0.8
+    do not implement RFC 7692 and expose no extension hook — the module
+    docs carry the honest layer assessment. Rust-to-Rust links only;
+    negotiation helpers (`EXTENSION_NAME`, `extension_accepted`) for custom
+    handshake headers.
+  - **Decompression-bomb guard**: output capped during inflation
+    (default 1 MiB); unknown flags / corrupt streams fail closed.
+  - Bench: `compression_roundtrip` — 2 KiB chat JSON 11.9×, repetitive
+    16 KiB binary 126× (incompressible input is sent as identity, never grown).
+- **Redis room adapter** (`redis` feature, off by default) — multi-node
+  room fan-out over Redis pub/sub:
+  - `room::RoomRegistry` trait extracted; `RoomManager` implements it
+    (single-node), `RedisRoomRegistry` implements it for the local half.
+  - Topology: `broadcast()` → local sinks **and** one `PUBLISH` on
+    `ws-kit:room:{id}`; every node `PSUBSCRIBE`s the prefix and applies
+    received messages to locally-hosted rooms only (no remote
+    materialization). Random per-registry node id drops self-echoes.
+  - **Semantics documented honestly: at-most-once, best-effort** — Redis
+    pub/sub has no persistence or replay; ws-kit makes no at-least-once
+    claim (see README for the Streams-based escape hatch).
+  - Publish path tested against a trait-mocked `ConnectionLike`; the full
+    two-node pub/sub loop is fixture-gated
+    (`tests/redis_rooms.rs`, `#[ignore]`, docker Redis).
+- **Backpressure stats hook** — `stats::StatsRecorder` (cheap-to-clone,
+  lock-free): connections, rooms, messages/bytes in/out, drops — global +
+  per-room, exposed as an immutable `Stats` snapshot. Wired into
+  `RoomManager::with_stats` / `Room::with_stats` (outbound traffic and
+  drops); `record_message_in` is the integrator read-loop hook.
+- **`metrics` facade feature** (off by default) — the same counters emitted
+  as `ws_kit_*` counters/gauges through the `metrics` crate, same pattern
+  as the `breaker` crate.
+
+### Changed
+
+- `Room` payloads moved from `String` to `Frame`: `room.broadcast("x".into())`
+  call sites keep compiling (`impl Into<Frame>`); `Room::subscribe()` now
+  returns `broadcast::Receiver<Frame>` — match on the variant or use
+  `Frame::into_text()` to restore old text-only behavior. (0.x minor;
+  one-line migration for text-only subscribers.)
+- `WsError` gained `Compression`, `PayloadTooLarge`, and `Redis(String)`
+  variants (all `Clone + Eq` preserved).
+
+### Performance
+
+- Re-measured the rx path after the message-model change
+  (`frame_roundtrip` bench): `Frame::Text` 1-rx round-trip ~90 ns (clean
+  window; SLO < 150 ns), binary ~81 ns — **binary does not slow the text
+  hot path**; 1000-receiver fan-out ~40 ns/receiver (was 42–44).
+  Details: PERF-SLO.md.
+
 ## [0.3.0] - 2026-09-05
 
 ### Added

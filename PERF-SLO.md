@@ -1,39 +1,83 @@
 # Performance SLOs — ws-kit
 
-Measured with criterion (`cargo bench --bench broadcast_roundtrip`), 2026-09.
+Measured with criterion (`cargo bench --bench broadcast_roundtrip`),
+2026-09 (0.2.x–0.3.x runs) and re-measured 2026-09-12 for 0.4.0.
 Hardware: Intel(R) Core(TM) i5-9400F CPU @ 2.90GHz, 6 cores, Linux x86_64.
 Criterion reports mean/median/stddev, not percentiles; **P50 column = criterion
 mean** (P99 is not directly measured; the CI bench job compares means against
 the saved `ci` baseline).
 
+**0.4.0 measurement caveat:** the 2026-09-12 re-run executed on a machine
+with sustained background load (~30–40 on 6 cores from unrelated projects).
+Absolute means in that state are inflated up to ~3×; the numbers below are
+from the cleanest window (best of repeated pinned runs), and the
+String-vs-Frame comparisons are same-run, so the *relative* claim (frame
+does not slow the text path) is load-independent.
+
 ## Measured (mean per operation)
 
 | Benchmark | P50 (mean) | Notes |
 |---|---|---|
-| `BroadcastHub::broadcast` + `try_recv` round-trip, 1 receiver | **99.1 ns** | publish→consume |
+| `BroadcastHub::broadcast` + `try_recv` round-trip, 1 receiver (String) | **99.1 ns** | 0.3.x clean run, publish→consume |
 | Round-trip, 100 receivers | 41.6 ns/receiver | fan-out amortized |
 | Round-trip, 1000 receivers | 43.6 ns/receiver | fan-out amortized |
 | Sustained broadcast+consume, single receiver | 82.2 ns/msg | steady-state |
 | Sustained, ×100 msgs | 80.2 ns/msg | |
 | Sustained, ×1000 msgs | 82.5 ns/msg | |
 
+### 0.4.0 re-measurement — `Frame` message model (`frame_roundtrip` bench)
+
+The rx path was re-measured after the message-model change (room/hub
+payloads now `Frame = Text(String) | Binary(Bytes)`):
+
+| Benchmark | P50 (mean) | vs 0.3.x |
+|---|---|---|
+| `Frame::Text` round-trip, 1 receiver | **89.7 ns** | at/below the 99.1 ns clean baseline — no regression |
+| `Frame::Binary` round-trip, 1 receiver | 80.7 ns | **binary is not slower than text** |
+| `Frame::Text` round-trip, 1000 receivers | ~40 ns/receiver | 42–44 ns/receiver claim holds |
+| `Frame::Binary` round-trip, 1000 receivers | ~31 ns/receiver | — |
+
+Verification statement: **the `Frame` message model does not slow the text
+hot path, and the binary variant rides the same broadcast ring at the same
+cost.** `Frame` is a same-size enum wrapper (discriminant + inline
+`String`/`Bytes`); conversion from owned payloads is a move, and the
+`BroadcastHub<T>` SLO path (`BroadcastHub<String>`) is unchanged code.
+
 ## SLO statements
 
 - A `BroadcastHub` broadcast→receive round-trip completes in **< 150 ns P50
-  for a single receiver** (measured 99 ns, 2026-09, 6-core x86_64).
-- Fan-out scales **sub-linearly**: ~42–44 ns per receiver at 100–1000
+  for a single receiver** (measured 99 ns clean, 2026-09; 0.4.0 `Frame`
+  variant 90 ns, 2026-09-12, 6-core x86_64).
+- Fan-out scales **sub-linearly**: ~40–44 ns per receiver at 100–1000
   receivers (tokio broadcast ring; the send itself stays O(1), receivers
   drain independently).
+- The binary frame path must not cost more than the text path (verified:
+  binary ≤ text in the same run).
 
 ## Allocation profile (from code reading)
 
 - The broadcast ring's slots are pre-allocated at channel construction —
   steady-state `broadcast()`/`try_broadcast()` performs **no per-message
   allocation beyond the caller's message value**.
-- Each receiver's `try_recv` clones the message value (`T: Clone`) — for the
-  bench's `String` payload that is 1 heap allocation per delivered receiver.
+- Each receiver's `try_recv` clones the message value (`T: Clone`) — for a
+  `String` payload that is 1 heap allocation per delivered receiver;
+  `Frame::Binary` clones are refcount bumps (no allocation).
+- Compression (`compression` feature) allocates one output `Vec` per
+  compress/decompress call by design; it is off the hot path unless opted
+  in.
 - Not yet verified with a counting allocator; the breaker probe (see its
   PERF-SLO.md) demonstrates the method.
+
+## Compression round-trip (`compression_roundtrip` bench, 0.4.0)
+
+Ratios are deterministic; absolute times vary with machine load. Level 6,
+defaults. Raw baseline = identity envelope (one memcpy).
+
+| Payload | Raw | Compressed | Ratio |
+|---|---|---|---|
+| Synthetic 2 KiB chat JSON | 2070 B | 174 B | **11.9×** |
+| Repetitive 16 KiB binary ramp | 16384 B | 130 B | **126×** |
+| Incompressible 4 KiB pseudo-random | 4096 B | 4097 B | 1× — sent as identity (envelope only, never grows) |
 
 ## Regression policy
 
@@ -43,4 +87,7 @@ the saved `ci` baseline).
 - Local: `cargo bench --bench broadcast_roundtrip -- --save-baseline main`,
   compare with `-- --baseline main`.
 - Alert threshold: >2× mean regression on
-  `broadcast_roundtrip/broadcast_recv_1rx`.
+  `broadcast_roundtrip/broadcast_recv_1rx` **or** on
+  `frame_roundtrip/frame_text_1rx` (0.4.0+).
+- Do not compare against baselines recorded on a loaded machine; re-run
+  when load < nproc.

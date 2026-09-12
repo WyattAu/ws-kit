@@ -1,13 +1,15 @@
 # Threat Model — ws-kit
 
-Status: **v1.0** · Method: STRIDE over the public API surface
-(`TokenExtractor`, `JsonCodec`, `BroadcastHub`, `Room`/`RoomManager`,
-`WsConfig`).
+Status: **v1.1** · Method: STRIDE over the public API surface
+(`TokenExtractor`, `JsonCodec`/`Frame`, `BroadcastHub`, `Room`/`RoomManager`,
+`WsConfig`, `compression` (0.4.0), `redis_rooms` (0.4.0)).
 
 Trust boundaries: (1) the WebSocket upgrade request (Authorization header,
 query string, Cookie header — all client-controlled), (2) messages flowing
-through the codec (client-authored JSON), (3) concurrent senders/receivers
-sharing hub and room state.
+through the codec (client-authored JSON **and** binary frames), (3) concurrent
+senders/receivers sharing hub and room state, (4) the Redis pub/sub bus for
+multi-node fan-out (0.4.0 — any process that can PUBLISH to the channel
+prefix can inject room messages).
 
 ## Assets
 
@@ -31,6 +33,11 @@ sharing hub and room state.
 | T7 | Cross-room message leakage | Info disclosure | `Room` / `RoomManager` | Per-room isolated `broadcast::Sender`; cleanup drops the sender | `tests/integration.rs::room_isolation`, `room_cleanup`, `room_manager_basic` |
 | T8 | Concurrent subscribe/broadcast races | Tampering | hub/room internals | `tokio::sync::broadcast` semantics; loom-modelled | `src/loom_tests.rs` (loom feature); `tests/integration.rs::hub_integration_with_config` |
 | T9 | Cross-site WebSocket hijacking (CSWSH): malicious page opens an upgrade riding the victim's cookies/ambient auth | Spoofing / Elevation | upgrade handshake (`Origin` header) | REQ-WSKIT-200: opt-in Origin allow-list (`WsConfig::allowed_origins`); non-empty list → missing/mismatched Origin rejected **403 before `on_upgrade`**; exact match after normalization (lowercase scheme/host, default ports omitted); no wildcard/suffix matching | `tests/integration.rs::origin_upgrade::req_wskit_200_*` (allowed→101, disallowed/missing→403, port-normalized, no-suffix); unit `src/origin.rs::origin_allowed_*`, `normalize_origin_*` |
+| T10 | Binary frame confused with text (parse confusion / mojibake / JSON injection into decoders) | Tampering | `Frame` (0.4.0) | `Frame::Binary` is carried opaquely — never parsed as text/JSON; JSON decoders take `&str`, so binary cannot reach them without an explicit UTF-8 conversion; `Frame::into_text` on binary errors instead of coercing | `src/codec.rs::frame_into_bytes_and_text`, `tests/integration.rs::frame_into_text_rejects_binary`, `binary_frame_routes_through_{hub,room}` |
+| T11 | Decompression bomb (small compressed payload inflates to gigabytes) | DoS | `compression` (0.4.0) | Output capped **during** inflation via `Read::take` (`CompressionConfig::max_size`, default 1 MiB) → `WsError::PayloadTooLarge`; identity payloads over the cap also rejected | `src/compression.rs::bomb_guard_caps_decompression` |
+| T12 | Crafted compressed envelope (unknown flags / corrupt stream / fake text tag) | Tampering | `compression` (0.4.0) | Unknown flag bits fail closed (`WsError::Compression`); corrupt deflate streams error; `FLAG_TEXT` with non-UTF-8 payload errors instead of lossy-coercing | `src/compression.rs::unknown_flags_fail_closed`, `corrupt_deflate_stream_is_an_error`, `text_frame_with_invalid_utf8_flag_rejected` |
+| T13 | Malicious/corrupt Redis publisher injects or corrupts room messages | Tampering / Spoofing | `redis_rooms` (0.4.0) | Envelope validated fail-closed (version byte, kind tag, UTF-8 for text) → `WsError::InvalidMessage`; self-echo suppression via per-registry node id; residual: the Redis channel is a **trusted bus** — ACLs/network isolation are deployment requirements | `src/redis_rooms.rs::malformed_envelopes_fail_closed`, `self_echo_is_dropped`; live fixtures `tests/redis_rooms.rs` |
+| T14 | Node outage/maintenance silently loses pub/sub messages | Availability / Repudiation | `redis_rooms` (0.4.0) | **Documented, not mitigated**: Redis pub/sub is at-most-once, best-effort — no persistence/replay/acks. README + module docs state semantics loudly; use Redis Streams (integrator swap behind `RoomRegistry`) where at-least-once is required | documented in `src/redis_rooms.rs` module docs + README (no test can assert absence of persistence) |
 
 ## CLOSED RISKS (mitigated — cited by tests)
 
@@ -66,6 +73,17 @@ sharing hub and room state.
 - **OPEN-5 — `parse_cookie` does not handle escaped separators** inside
   quoted values; a token containing `;` splits. Fail-closed (wrong value →
   auth failure), listed for completeness.
+- **OPEN-6 (0.4.0) — Redis pub/sub channels are an unauthenticated trusted
+  bus.** Any process able to PUBLISH/SUBSCRIBE on the prefix can inject or
+  read every room message fleet-wide; envelope validation (T13) guards
+  framing, not authorization. Channel-level ACLs, TLS (`rediss://`), and
+  network isolation are deployment requirements, not crate features.
+- **OPEN-7 (0.4.0) — compression side channels are out of scope.**
+  `compression` is application-layer and opt-in for Rust-to-Rust links;
+  like all DEFLATE use it is theoretically exposed to compression-oracle
+  attacks against secrets attacker-controlled requests can influence. No
+  mitigation (padding option) is provided; document if used on
+  secret-bearing payloads.
 
 ## Out of Scope
 
