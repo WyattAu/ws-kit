@@ -408,6 +408,23 @@ mod tests {
     }
 
     #[test]
+    fn identity_envelope_roundtrips_through_decompress() {
+        let c = FrameCompressor::with_defaults();
+        // Flag byte without the COMPRESSED bit: body is passed through
+        // as-is (subject to max_size).
+        let env = [0b0000_0000, b'o', b'k'];
+        assert_eq!(c.decompress(&env).unwrap(), b"ok".to_vec());
+        // Same path, but oversized: rejected before any allocation.
+        let big = vec![0u8; c.config.max_size + 1];
+        let mut oversized = vec![0b0000_0000];
+        oversized.extend_from_slice(&big);
+        assert_eq!(
+            c.decompress(&oversized).unwrap_err(),
+            WsError::PayloadTooLarge
+        );
+    }
+
+    #[test]
     fn corrupt_deflate_stream_is_an_error() {
         let c = FrameCompressor::with_defaults();
         let garbage_env = [FLAG_COMPRESSED, 0xDE, 0xAD, 0xBE, 0xEF];

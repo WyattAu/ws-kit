@@ -153,6 +153,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn new_equals_default() {
+        assert_eq!(WsConfig::new(), WsConfig::default());
+    }
+
+    #[test]
     fn defaults() {
         let c = WsConfig::default();
         assert_eq!(c.heartbeat_interval, Duration::from_secs(30));

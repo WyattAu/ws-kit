@@ -425,7 +425,7 @@ fn redis_err(e: redis::RedisError) -> WsError {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     /// In-memory publish connection: records PUBLISH payloads so the
     /// fan-out path is testable without Redis (the trait-mocked pubsub
@@ -793,5 +793,30 @@ mod tests {
     #[tokio::test]
     async fn connect_rejects_invalid_url() {
         assert!(RedisRoomRegistry::connect("not a url").await.is_err());
+    }
+
+    // The registry implements the same `RoomRegistry` trait as
+    // `RoomManager` by delegating to its local half — exercise every
+    // delegation through the trait object.
+    #[test]
+    fn room_registry_trait_delegates_to_local_manager() {
+        let (reg, _published) = test_registry();
+        let reg: Arc<dyn RoomRegistry> = Arc::new(reg);
+
+        let room = reg.get_or_create("trait-lobby");
+        assert!(reg.get("trait-lobby").is_some());
+        assert_eq!(reg.room_count(), 1);
+        assert_eq!(reg.room_ids(), vec!["trait-lobby".to_string()]);
+
+        room.join(7, "alice".to_string());
+        assert!(room.contains(7));
+        assert_eq!(reg.total_participants(), 1);
+
+        assert!(reg.remove("trait-lobby").is_some());
+        assert!(reg.get("trait-lobby").is_none());
+        assert_eq!(reg.room_count(), 0);
+
+        assert_eq!(reg.cleanup(), 0);
+        assert_eq!(reg.cleanup_empty(), 0);
     }
 }
