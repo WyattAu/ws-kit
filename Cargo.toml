@@ -65,6 +65,11 @@ metrics = ["dep:metrics"]
 # Deprecated no-op (kept for 0.3.x compatibility): tracing support never
 # shipped — no code path references it. Do not add new dependencies on it.
 tracing = []
+# Loom model-checking marker (see src/loom_tests.rs). Does not pull the
+# dependency by itself — activation is `RUSTFLAGS="--cfg loom"`; pass this
+# feature alongside the flag as the canonical invocation:
+#   RUSTFLAGS="--cfg loom" cargo test --release --features loom loom -- --test-threads=1
+loom = []
 
 [[test]]
 name = "integration"
