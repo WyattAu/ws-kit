@@ -733,4 +733,65 @@ mod tests {
         assert!(got.is_binary());
         assert_eq!(got.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
     }
+
+    /// Publish connection that always fails — proves the redis error is
+    /// mapped into [`WsError`] instead of leaking.
+    #[derive(Clone, Default)]
+    struct FailingConn;
+
+    impl ConnectionLike for FailingConn {
+        fn req_packed_command<'a>(
+            &'a mut self,
+            _cmd: &'a Cmd,
+        ) -> redis::RedisFuture<'a, redis::Value> {
+            Box::pin(async {
+                Err(redis::RedisError::from((
+                    redis::ErrorKind::IoError,
+                    "connection dropped",
+                )))
+            })
+        }
+
+        fn req_packed_commands<'a>(
+            &'a mut self,
+            _cmd: &'a redis::Pipeline,
+            _offset: usize,
+            _count: usize,
+        ) -> redis::RedisFuture<'a, Vec<redis::Value>> {
+            Box::pin(async {
+                Err(redis::RedisError::from((
+                    redis::ErrorKind::IoError,
+                    "connection dropped",
+                )))
+            })
+        }
+
+        fn get_db(&self) -> i64 {
+            0
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_connection_failure_maps_to_ws_error() {
+        let client = Client::open("redis://127.0.0.1:6379").unwrap();
+        let reg = RedisRoomRegistry::from_parts(
+            RoomManager::new(),
+            client,
+            FailingConn,
+            DEFAULT_CHANNEL_PREFIX,
+        );
+        let err = reg
+            .publish(&Frame::from("x"), "lobby")
+            .await
+            .expect_err("failing conn must surface an error");
+        assert!(
+            matches!(err, WsError::Redis(_)),
+            "redis failure must map to WsError::Redis, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_rejects_invalid_url() {
+        assert!(RedisRoomRegistry::connect("not a url").await.is_err());
+    }
 }

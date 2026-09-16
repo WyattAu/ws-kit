@@ -23,18 +23,27 @@
 //! requires valgrind) pins the cycle cost; this file pins heap behavior.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
 use ws_kit::codec::Frame;
 use ws_kit::hub::BroadcastHub;
 
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    /// Allocations made by the *current thread* only. libtest runs tests
+    /// on parallel threads and itself allocates around test execution
+    /// (thread spawn, output capture) — a process-global counter would
+    /// fold that noise into measured windows and flake the zero-alloc
+    /// assertions (observed as +5 phantom allocs on CI, traced to the
+    /// sibling test's thread spawn). Per-thread counting makes each test
+    /// hermetic by construction.
+    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
 
 struct Counting;
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        ALLOCATIONS.with(|c| c.set(c.get() + 1));
         unsafe { System.alloc(layout) }
     }
 
@@ -43,12 +52,12 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        ALLOCATIONS.with(|c| c.set(c.get() + 1));
         unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        ALLOCATIONS.with(|c| c.set(c.get() + 1));
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
@@ -57,7 +66,7 @@ unsafe impl GlobalAlloc for Counting {
 static GLOBAL: Counting = Counting;
 
 fn allocations() -> usize {
-    ALLOCATIONS.load(Ordering::Relaxed)
+    ALLOCATIONS.with(|c| c.get())
 }
 
 const PAYLOAD: &str = "alloc-probe payload";
