@@ -1,4 +1,5 @@
 # ws-kit
+[![Estate integration](https://github.com/WyattAu/estate-integration/actions/workflows/ci.yml/badge.svg)](https://github.com/WyattAu/estate-integration/actions/workflows/ci.yml)
 
 [![docs.rs](https://docs.rs/ws-kit/badge.svg)](https://docs.rs/ws-kit)
 [![crates.io](https://img.shields.io/crates/v/ws-kit.svg)](https://crates.io/crates/ws-kit)
