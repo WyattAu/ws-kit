@@ -237,6 +237,14 @@ data). With the `metrics` feature the same numbers are emitted as
 `ws_kit_*` counters/gauges on the `metrics` facade for Prometheus/OTLP
 export — same pattern as the `breaker` crate.
 
+## Stability
+
+`ws-kit` is 1.0. Breaking changes require a minor bump and a `#[deprecated]`
+window of at least one minor release; MSRV bumps are minor releases, never patch
+releases. `missing_docs` is denied and `unsafe` is forbidden. What is explicitly
+not stable: cross-node room event ordering is best-effort by design, and the
+internal frame bytes are not a cross-stack protocol.
+
 ## Concurrency testing
 
 The connection counter's atomic logic (bounded increment CAS loop, saturating

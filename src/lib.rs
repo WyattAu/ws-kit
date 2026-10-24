@@ -2,6 +2,7 @@
 #![cfg_attr(docsrs, allow(unused_attributes))]
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+#![deny(missing_docs)]
 
 //! # ws-kit
 //!
