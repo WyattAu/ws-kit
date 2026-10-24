@@ -27,7 +27,7 @@ bytes = { version = "1", features = ["serde"] }
 # flate2 (pure-Rust miniz_oxide backend — keeps the unsafe-free posture).
 flate2 = { version = "1", default-features = false, features = ["rust_backend"], optional = true }
 # Multi-node room fan-out (`redis` feature): tokio async + pubsub.
-redis = { version = "0.32", default-features = false, features = ["tokio-comp"], optional = true }
+redis = { version = "1.7", default-features = false, features = ["tokio-comp"], optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["std"], optional = true }
 # `metrics` facade emission (same pattern as the breaker crate).
 metrics = { version = "0.24", optional = true }
